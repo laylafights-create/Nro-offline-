@@ -1,4 +1,4 @@
-name: Decompile NRO JAR
+name: Decompile NRO JAR (keep all files)
 
 on:
   workflow_dispatch:
@@ -13,11 +13,9 @@ permissions:
 jobs:
   decompile:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    timeout-minutes: 20
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -25,38 +23,50 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Check input JAR
-        run: |
-          test -f "NRO-Offline-1.0.4.jar" || {
-            echo "Khong tim thay NRO-Offline-1.0.4.jar o thu muc goc repository."
-            exit 1
-          }
+      - name: Check JAR
+        run: test -f "NRO-Offline-1.0.4.jar"
 
-      - name: Download CFR decompiler
+      - name: Extract every original JAR entry
+        run: |
+          mkdir -p output/original
+          cd output/original
+          jar xf "$GITHUB_WORKSPACE/NRO-Offline-1.0.4.jar"
+
+      - name: Download CFR
         run: |
           curl --fail --location --retry 3 \
             "https://repo.maven.apache.org/maven2/org/benf/cfr/0.152/cfr-0.152.jar" \
             --output cfr.jar
 
-      - name: Decompile JAR
+      - name: Decompile classes
         run: |
-          mkdir -p decompiled
+          mkdir -p output/decompiled
           java -jar cfr.jar "NRO-Offline-1.0.4.jar" \
-            --outputdir decompiled \
-            --silent true
+            --outputdir output/decompiled \
+            --silent true 2>&1 | tee output/cfr.log
+          echo "Original class files: $(find output/original -name '*.class' | wc -l)"
+          echo "Decompiled Java files: $(find output/decompiled -name '*.java' | wc -l)"
 
-      - name: Create ZIP
+      - name: Create complete archive
         run: |
-          test -n "$(find decompiled -type f -name '*.java' -print -quit)" || {
-            echo "Decompiler khong tao ra file Java nao."
-            exit 1
-          }
-          zip -qr NRO-Offline-1.0.4-decompiled.zip decompiled
+          cat > output/README.txt <<'EOF'
+          original/   = every entry extracted from the original JAR, including
+                        .class files, images, sounds, manifest and resources.
+          decompiled/ = Java source produced by CFR. It may be incomplete or
+                        require manual fixes; inner classes may be nested in
+                        their outer Java file.
+          cfr.log     = decompiler output.
+          The original/ folder is the authoritative complete set of game files.
+          Do not replace original classes with decompiled sources until they
+          have been compiled and tested for the target Java ME platform.
+          EOF
+          cd output
+          zip -qr "$GITHUB_WORKSPACE/NRO-Offline-1.0.4-full-decompile.zip" .
 
-      - name: Upload decompiled source
+      - name: Upload result
         uses: actions/upload-artifact@v4
         with:
-          name: NRO-Offline-1.0.4-decompiled
-          path: NRO-Offline-1.0.4-decompiled.zip
+          name: NRO-Offline-1.0.4-full-decompile
+          path: NRO-Offline-1.0.4-full-decompile.zip
           if-no-files-found: error
           retention-days: 14
